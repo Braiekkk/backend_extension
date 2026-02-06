@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from backend_extension.hugface2 import process_message  # Import the workflow function from your HuggingFace integration
+from hugface2 import process_message  # Import the workflow function from your HuggingFace integration
 app = Flask(__name__)
 CORS(app)  # Enables Cross-Origin Resource Sharing for frontend calls
 
