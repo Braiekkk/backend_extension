@@ -179,14 +179,19 @@ def _validate_transform(raw: Dict[str, Any], user_text: str) -> Dict[str, Any]:
     original = _normalize_str(raw.get("originalStatement")) or user_text
     replacement = _normalize_str(raw.get("replacement"))
     
-    # If the LLM refused or gave a generic 'I cannot rewrite this'
+    # Extract and normalize severity
+    severity = _normalize_str(raw.get("severity"))
+    if severity not in ["low", "medium", "high"]:
+        severity = "medium"  # Default fallback
+
     if not replacement or "cannot" in replacement.lower() or "rephrase" in replacement.lower():
-        # A truly neutral fallback for pure insults
         replacement = "I disagree with this perspective." 
 
-    return {"originalStatement": original, "replacement": replacement}
-
-
+    return {
+        "originalStatement": original, 
+        "replacement": replacement,
+        "severity": severity
+    }
 # -----------------------
 # Schemas
 # -----------------------
@@ -204,6 +209,9 @@ class Classification(BaseModel):
 class DataSchema(BaseModel):
     originalStatement: str = Field(
         description="The exact original text provided by the user."
+    )
+    severity: Optional[Literal["low", "medium", "high"]] = Field(
+        description="The severity level of the original statement. Optional field." 
     )
     replacement: str = Field(
         description="The rewritten version that is professional and free of insults. "
@@ -239,20 +247,21 @@ class_chain = class_prompt | chat_model | class_parser
 # Step 2: Transformation chain
 # ----------------------------
 trans_parser = JsonOutputParser(pydantic_object=DataSchema)
+
 trans_prompt = ChatPromptTemplate.from_messages([
     ("system",
-     "You are a professional editor. Your task is to rewrite toxic or insulting 'Bullying' statements "
-     "into neutral, constructive, and professional language. "
+     "You are a professional editor and content analyst. "
+     "1. Analyze the 'severity' of the bullying: 'low' (mild insults), 'medium' (harsh/personal), or 'high' (threats/severe harassment)."
+     "\n2. Rewrite toxic 'Bullying' statements into neutral, constructive language."
      "\n\nRules:"
-     "\n1. Preserve the core meaning or grievance of the original text."
-     "\n2. Remove all personal attacks, name-calling, and insults."
-     "\n3. Use 'I' statements or objective observations where possible."
-     "\n4. If the text is just a pure insult with no substance context (e.g., 'You are stupid'), "
-     "rewrite it as a request for more clarity or a statement of disagreement. (e.g., 'I don't agree with your point')"
-     "\n5. Return ONLY valid JSON."
+     "\n- Preserve the core meaning but remove all insults."
+     "\n- If the text is a pure insult, rewrite as a statement of disagreement."
+     "\n- Return ONLY valid JSON."
      "\n\n{format_instructions}"),
     ("human", "{text}")
 ]).partial(format_instructions=trans_parser.get_format_instructions())
+
+
 trans_chain = trans_prompt | chat_model | trans_parser
 
 
@@ -311,10 +320,12 @@ def process_message(user_text: str) -> Dict[str, str]:
         raw_trans = _safe_invoke(trans_chain, {"text": user_text}, stage="TRANSFORM")
         trans = _validate_transform(raw_trans, user_text)
 
+        # 'trans' now contains 'severity', 'originalStatement', and 'replacement'
         result = {"sentiment": sentiment, "category": category} | trans
-        print("\nOUTPUT (original + replacement):")
+        print("\nOUTPUT (original + replacement + severity):")
         print(result)
         return result
+    
 
     # Fallback
     print("\nBRANCH FALLBACK")
@@ -333,7 +344,7 @@ def process_message(user_text: str) -> Dict[str, str]:
 # Test
 # -----------------------
 if __name__ == "__main__":
-    text_input = "kill yourself you are so stupid and i hate you"
+    text_input = "i think you are an idiot and your ideas are trash and i wish death upon you"
     final_result = process_message(text_input)
     print("\n--- FINAL WORKFLOW OUTPUT ---")
     print(json.dumps(final_result, ensure_ascii=False, indent=2))
