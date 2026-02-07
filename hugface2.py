@@ -222,7 +222,7 @@ class DataSchema(BaseModel):
 # LLM setup
 # -----------------------
 llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+    repo_id="meta-llama/Llama-3.1-8B-Instruct",
     temperature=0.0,
     huggingfacehub_api_token=hf_token,
 )
@@ -344,7 +344,7 @@ def process_message(user_text: str) -> Dict[str, str]:
 # Test
 # -----------------------
 if __name__ == "__main__":
-    text_input = "i think you are an idiot and your ideas are trash and i wish death upon you"
+    text_input = "please disconnect from reality"
     final_result = process_message(text_input)
     print("\n--- FINAL WORKFLOW OUTPUT ---")
     print(json.dumps(final_result, ensure_ascii=False, indent=2))

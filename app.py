@@ -4,22 +4,88 @@ from hugface2 import process_message  # Import the workflow function from your H
 app = Flask(__name__)
 CORS(app)  # Enables Cross-Origin Resource Sharing for frontend calls
 
-@app.route('/api/analyze', methods=['POST'])
-def analyze_text():
-    data = request.get_json()
-    
-    if not data or 'text' not in data:
-        return jsonify({"error": "Missing 'text' field in request body"}), 400
 
-    user_input = data['text']
-    
-    try:
-        # Call your LangChain workflow
-        result = process_message(user_input)
-        return jsonify(result), 200
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+import uuid
+from threading import Lock
+
+SESSIONS = {}
+LOCK = Lock()
+
+def get_session(session_id):
+    with LOCK:
+        return SESSIONS.get(session_id)
+
+def create_session():
+    session_id = str(uuid.uuid4())
+    with LOCK:
+        SESSIONS[session_id] = {
+            "items": []
+        }
+    return session_id
+
+
+from flask import request, jsonify, make_response
+
+@app.route("/api/connect", methods=["POST"])
+def connect():
+    data = request.get_json() or {}
+    items = data.get("items", [])
+
+    session_id = request.cookies.get("session_id")
+
+    # Create session if missing / invalid
+    if not session_id or not get_session(session_id):
+        session_id = create_session()
+
+    session = get_session(session_id)
+
+    # Append objects
+    if isinstance(items, list):
+        session["items"].extend(items)
+
+    response = make_response(jsonify({
+        "stored_items_count": len(session["items"])
+    }))
+
+    # 🍪 Set cookie
+    response.set_cookie(
+        "session_id",
+        session_id,
+        httponly=True,
+        samesite="Lax"
+        # secure=True  # enable in HTTPS
+    )
+
+    return response, 200
+
+
+
+@app.route("/api/analyze", methods=["POST"])
+def analyze():
+    data = request.get_json()
+    text = data.get("text")
+    items = data.get("items", [])
+
+    session_id = request.cookies.get("session_id")
+
+    if not session_id:
+        return jsonify({"error": "No session"}), 401
+
+    session = get_session(session_id)
+    if not session:
+        return jsonify({"error": "Invalid session"}), 401
+
+    # Optional append
+    if isinstance(items, list):
+        session["items"].extend(items)
+
+    result = process_message(text, session["items"])
+
+    return jsonify({
+        "result": result,
+        "stored_items_count": len(session["items"])
+    }), 200
+
 
 if __name__ == '__main__':
     # Run the server on port 5000
