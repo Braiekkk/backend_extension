@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from hugface2 import process_message  # Import the workflow function from your HuggingFace integration
 app = Flask(__name__)
-CORS(app)  # Enables Cross-Origin Resource Sharing for frontend calls
+CORS(app, supports_credentials=True)  # Enable CORS with credentials for cookies
 
 
 import uuid
@@ -79,12 +79,97 @@ def analyze():
     if isinstance(items, list):
         session["items"].extend(items)
 
-    result = process_message(text, session["items"])
+    result = process_message(text)
 
     return jsonify({
         "result": result,
         "stored_items_count": len(session["items"])
     }), 200
+
+
+@app.route("/api/detect", methods=["POST"])
+def detect():
+    """Detect hate speech in user input and provide rewrites if needed"""
+    data = request.get_json()
+    text = data.get("text", "")
+
+    if not text or text.strip() == "":
+        return jsonify({
+            "is_hate": False,
+            "score": 0.0,
+            "category": None,
+            "sentiment": "neutral",
+            "message": None,
+            "rewrites": []
+        }), 200
+
+    # Get or create session
+    session_id = request.cookies.get("session_id")
+    if not session_id or not get_session(session_id):
+        session_id = create_session()
+
+    # Process the message through HuggingFace pipeline
+    result = process_message(text)
+
+    # Extract results
+    sentiment = result.get("sentiment", "neutral")
+    category = result.get("category")
+    replacement = result.get("replacement", "")
+    severity = result.get("severity", "medium")
+    
+    # Calculate hate speech score (0.0 to 1.0)
+    is_hate = sentiment == "negative" and category is not None
+    
+    # Score mapping based on category and severity
+    if not is_hate:
+        score = 0.0
+    elif category == "Bullying":
+        # Bullying has severity levels
+        severity_scores = {"low": 0.4, "medium": 0.6, "high": 0.85}
+        score = severity_scores.get(severity, 0.6)
+    else:
+        # Serious hate categories (Racism, Sexism, etc.)
+        score = 0.95
+    
+    # Generate warning message
+    message = None
+    if is_hate:
+        if category in ["Racism", "Sexism", "Xenophobia", "Ableism", "Religious hate", "Cultural discrimination"]:
+            message = f"⚠️ This might come out as hurtful. Your message contains {category.lower()} and may seriously offend others."
+        elif category == "Bullying":
+            if severity == "high":
+                message = "⚠️ This might come out as hurtful. Your message contains severe bullying language."
+            elif severity == "medium":
+                message = "⚠️ This might come out as hurtful. Your message may be perceived as offensive."
+            else:
+                message = "⚠️ This might come out as hurtful. Consider rephrasing to be more respectful."
+    
+    # Generate rewrites (provide 1-3 alternatives)
+    rewrites = []
+    if is_hate and replacement and replacement != text:
+        rewrites.append(replacement)
+    
+    response = make_response(jsonify({
+        "is_hate": is_hate,
+        "score": round(score, 2),
+        "category": category,
+        "sentiment": sentiment,
+        "message": message,
+        "rewrites": rewrites,
+        "severity": severity if category == "Bullying" else None
+    }))
+    
+    # Set session cookie if new
+    if request.cookies.get("session_id") != session_id:
+        response.set_cookie(
+            "session_id",
+            session_id,
+            httponly=True,
+            samesite="None",
+            secure=False  # Set to True if using HTTPS
+        )
+    
+    return response, 200
 
 
 if __name__ == '__main__':
